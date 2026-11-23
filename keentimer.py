@@ -4,6 +4,7 @@ import json, os, sys, time, threading, hashlib, secrets, subprocess, http.client
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 PORT = int(os.environ.get('KT_PORT', 3000))
+WEB_HOST = os.environ.get('KT_WEB_HOST', '')
 WEB_PORT = int(os.environ.get('KT_WEB_PORT', 80))
 RCI_PORT = int(os.environ.get('KT_RCI_PORT', 79))
 STATE_FILE = os.environ.get('KT_STATE', '/opt/etc/keentimer/state.json')
@@ -13,6 +14,10 @@ SESSION_TTL = 12 * 3600
 lock = threading.RLock()
 sessions = {}
 state = {'clients': {}}
+
+
+def log(*a):
+    print(time.strftime('%F %T'), *a, flush=True)
 
 
 def load_page():
@@ -118,7 +123,7 @@ def worker():
         try:
             reconcile()
         except Exception as e:
-            print('reconcile error:', e, flush=True)
+            log('reconcile error:', e)
         time.sleep(5)
 
 
@@ -128,13 +133,15 @@ def release_all():
         set_access(mac, True)
 
 
-def router_login(login, password):
-    c = http.client.HTTPConnection('127.0.0.1', WEB_PORT, timeout=8)
+def router_login(host, login, password):
+    host = WEB_HOST or host or '127.0.0.1'
+    c = http.client.HTTPConnection(host, WEB_PORT, timeout=8)
     try:
         c.request('GET', '/auth')
         r = c.getresponse()
         r.read()
-        if r.status == 200:
+        if r.status != 401:
+            log('auth: GET /auth on %s:%d returned %d %s' % (host, WEB_PORT, r.status, r.getheader('X-Detail') or ''))
             return False
         ch = r.getheader('X-NDM-Challenge') or ''
         realm = r.getheader('X-NDM-Realm') or ''
@@ -145,8 +152,11 @@ def router_login(login, password):
                   {'Content-Type': 'application/json', 'Cookie': cookie})
         r2 = c.getresponse()
         r2.read()
+        if r2.status != 200:
+            log('auth: POST /auth for "%s" returned %d' % (login, r2.status))
         return r2.status == 200
-    except Exception:
+    except Exception as e:
+        log('auth error:', e)
         return False
     finally:
         c.close()
@@ -227,7 +237,8 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         d = self.body()
         if self.path == '/api/login':
-            if router_login(str(d.get('login', '')), str(d.get('password', ''))):
+            local_ip = self.connection.getsockname()[0]
+            if router_login(local_ip, str(d.get('login', '')), str(d.get('password', ''))):
                 t = secrets.token_hex(24)
                 sessions[t] = time.time() + SESSION_TTL
                 return self.js({'ok': True}, extra={'Set-Cookie': 'kt_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d' % (t, SESSION_TTL)})
