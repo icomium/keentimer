@@ -19,6 +19,14 @@ opkg update && opkg install libcurl curl ca-bundle && curl -fsSL https://raw.git
 
 libcurl ставится вместе с curl, иначе после обновления curl может появиться ошибка `undefined symbol`.
 
+## Обновление (одна команда)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/icomium/keentimer/main/update.sh | sh
+```
+
+Скачивает свежие файлы и перезапускает сервис. Список клиентов и таймеры (`state.json`) не затрагиваются.
+
 ## Удаление (одна команда)
 
 ```sh
@@ -29,4 +37,4 @@ curl -fsSL https://raw.githubusercontent.com/icomium/keentimer/main/uninstall.sh
 
 ## Переменные окружения
 
-`KT_PORT` (3000), `KT_WEB_PORT` (80, веб-интерфейс роутера для проверки логина), `KT_RCI_PORT` (79).
+`KT_PORT` (3000), `KT_WEB_HOST` (адрес веб-интерфейса роутера для проверки логина; по умолчанию — LAN-адрес, на который пришёл запрос), `KT_WEB_PORT` (80), `KT_RCI_PORT` (79).
