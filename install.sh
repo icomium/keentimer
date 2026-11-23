@@ -7,7 +7,7 @@ REPO="https://raw.githubusercontent.com/icomium/keentimer/main"
 
 mkdir -p /opt/etc/keentimer /opt/share/keentimer
 opkg update
-for p in curl ca-bundle; do opkg list-installed | grep -q "^$p " || opkg install "$p"; done
+opkg install libcurl curl ca-bundle
 if ! opkg list-installed | grep -q "^python3 "; then
   opkg install python3
   touch /opt/etc/keentimer/.python_installed
