@@ -7,7 +7,7 @@ APP=/opt/share/keentimer/keentimer.py
 start() {
   stop >/dev/null 2>&1
   mkdir -p /opt/var/run /opt/var/log
-  nohup /opt/bin/python3 "$APP" >>"$LOG" 2>&1 &
+  ( trap '' HUP; exec /opt/bin/python3 "$APP" >>"$LOG" 2>&1 ) &
   echo $! >"$PIDFILE"
   echo "keentimer started (port 3000)"
 }
