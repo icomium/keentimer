@@ -14,6 +14,7 @@ if ! opkg list-installed | grep -q "^python3 "; then
 fi
 
 curl -fsSL "$REPO/keentimer.py" -o /opt/share/keentimer/keentimer.py
+curl -fsSL "$REPO/index.html" -o /opt/share/keentimer/index.html
 curl -fsSL "$REPO/S99keentimer" -o /opt/etc/init.d/S99keentimer
 chmod +x /opt/share/keentimer/keentimer.py /opt/etc/init.d/S99keentimer
 /opt/etc/init.d/S99keentimer restart
