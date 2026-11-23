@@ -1,12 +1,13 @@
 #!/opt/bin/python3
 # KeenTimer - time-limited internet access per client for Keenetic (KeeneticOS 5.x)
-import json, os, sys, time, threading, hashlib, secrets, subprocess, http.client
+import json, os, re, sys, time, threading, hashlib, secrets, subprocess, http.client
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 PORT = int(os.environ.get('KT_PORT', 3000))
 WEB_HOST = os.environ.get('KT_WEB_HOST', '')
 WEB_PORT = int(os.environ.get('KT_WEB_PORT', 80))
 RCI_PORT = int(os.environ.get('KT_RCI_PORT', 79))
+CHECK_INTERVAL = int(os.environ.get('KT_INTERVAL', 60))
 STATE_FILE = os.environ.get('KT_STATE', '/opt/etc/keentimer/state.json')
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSION_TTL = 12 * 3600
@@ -14,6 +15,23 @@ SESSION_TTL = 12 * 3600
 lock = threading.RLock()
 sessions = {}
 state = {'clients': {}}
+
+FAVICON = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+           "<rect width='64' height='64' rx='14' fill='#4976d2'/>"
+           "<circle cx='32' cy='35' r='17' fill='none' stroke='#fff' stroke-width='5'/>"
+           "<path d='M32 25v10l7 5' fill='none' stroke='#fff' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/>"
+           "<path d='M26 9h12' stroke='#fff' stroke-width='5' stroke-linecap='round'/></svg>")
+
+FONTS_CSS = """@font-face{font-family:'Onest';src:url('/fonts/Onest-cyrillic.woff2') format('woff2');font-weight:400 700;font-style:normal;font-display:swap;unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'Onest';src:url('/fonts/Onest-latin.woff2') format('woff2');font-weight:400 700;font-style:normal;font-display:swap;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'JetBrains Mono';src:url('/fonts/JetBrainsMono-cyrillic.woff2') format('woff2');font-weight:400 500;font-style:normal;font-display:swap;unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:'JetBrains Mono';src:url('/fonts/JetBrainsMono-latin.woff2') format('woff2');font-weight:400 500;font-style:normal;font-display:swap;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+"""
+
+HEAD_EXTRA = (b"<link rel='icon' type='image/svg+xml' href='/favicon.svg'>"
+              b"<link rel='stylesheet' href='/fonts.css'>")
+FONT_RE = re.compile(r'^[A-Za-z0-9_.-]+\.woff2$')
+STATIC_CACHE = {'Cache-Control': 'public, max-age=86400'}
 
 
 def log(*a):
@@ -23,7 +41,7 @@ def log(*a):
 def load_page():
     try:
         with open(os.path.join(APP_DIR, 'index.html'), 'rb') as f:
-            return f.read()
+            return f.read().replace(b'</head>', HEAD_EXTRA + b'</head>', 1)
     except OSError:
         return b'index.html not found'
 
@@ -124,7 +142,7 @@ def worker():
             reconcile()
         except Exception as e:
             log('reconcile error:', e)
-        time.sleep(5)
+        time.sleep(CHECK_INTERVAL)
 
 
 def release_all():
@@ -170,11 +188,15 @@ class H(BaseHTTPRequestHandler):
 
     def send(self, code, body, ctype='application/json', extra=None):
         b = body if isinstance(body, bytes) else body.encode()
+        extra = extra or {}
+        if ctype.startswith('text/') or ctype == 'application/json':
+            ctype += '; charset=utf-8'
         self.send_response(code)
-        self.send_header('Content-Type', ctype + '; charset=utf-8')
+        self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(b)))
-        self.send_header('Cache-Control', 'no-store')
-        for k, v in (extra or {}).items():
+        if 'Cache-Control' not in extra:
+            self.send_header('Cache-Control', 'no-store')
+        for k, v in extra.items():
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(b)
@@ -207,6 +229,17 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ('/', '/index.html'):
             return self.send(200, load_page(), 'text/html')
+        if self.path in ('/favicon.svg', '/favicon.ico'):
+            return self.send(200, FAVICON, 'image/svg+xml', STATIC_CACHE)
+        if self.path == '/fonts.css':
+            return self.send(200, FONTS_CSS, 'text/css', STATIC_CACHE)
+        if self.path.startswith('/fonts/'):
+            name = self.path[7:]
+            p = os.path.join(APP_DIR, 'fonts', name)
+            if FONT_RE.match(name) and os.path.isfile(p):
+                with open(p, 'rb') as f:
+                    return self.send(200, f.read(), 'font/woff2', STATIC_CACHE)
+            return self.js({'error': 'not found'}, 404)
         if not self.authed():
             return self.js({'error': 'auth'}, 401)
         if self.path == '/api/clients':
